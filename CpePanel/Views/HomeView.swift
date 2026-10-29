@@ -16,7 +16,6 @@ struct HomeView: View {
                     contractCards
                     pccCard
                     trafficCard
-                    quickActions
                 }
                 .padding(.horizontal, 14)
                 .padding(.top, 6)
@@ -355,7 +354,7 @@ struct HomeView: View {
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.secondary.opacity(0.15)))
                 Spacer()
-                legend("下行", bytes(s["monthRx"].isEmpty ? "" : todayRx), .blue)
+                legend("下行", todayRx, .blue)
                 legend("上行", todayTx, .orange)
                 legend("合计", bytes(s["todayTotal"]), .secondary)
             }
@@ -372,8 +371,21 @@ struct HomeView: View {
             .strokeBorder(.white.opacity(0.3), lineWidth: 1))
     }
 
-    private var todayRx: String { "--" }
-    private var todayTx: String { "--" }
+    /// 设备只提供 TodayTotalBytes，无分方向字段
+    /// 用本月上下行比例拆分今日合计（近似值）
+    private var todayRx: String {
+        let total = s.double("todayTotal")
+        let mRx = s.double("monthRx"), mTx = s.double("monthTx")
+        guard total > 0, mRx + mTx > 0 else { return "--" }
+        return bytes(String(Int(total * mRx / (mRx + mTx))))
+    }
+
+    private var todayTx: String {
+        let total = s.double("todayTotal")
+        let mRx = s.double("monthRx"), mTx = s.double("monthTx")
+        guard total > 0, mRx + mTx > 0 else { return "--" }
+        return bytes(String(Int(total * mTx / (mRx + mTx))))
+    }
 
     private func bytes(_ v: String) -> String {
         guard let n = Double(v), n > 0 else { return "--" }
@@ -401,5 +413,4 @@ struct HomeView: View {
         .background(RoundedRectangle(cornerRadius: 15).fill(.ultraThinMaterial))
     }
 
-    private var quickActions: some View { EmptyView() }
 }
