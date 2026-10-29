@@ -18,6 +18,7 @@ final class CpeStore: ObservableObject {
         didSet { UserDefaults.standard.set(refreshInterval, forKey: "cpe.rateMs") }
     }
 
+    private let bridge = CpeBridge.shared
     private var pollTask: Task<Void, Never>?
 
     init() {
@@ -29,15 +30,17 @@ final class CpeStore: ObservableObject {
 
     func login(host: String, user: String, password: String) async -> Bool {
         errorText = nil
-        CpeAPI.shared.update(host: host, user: user, password: password)
-        do {
-            try await CpeAPI.shared.login()
+        isLoading = true
+        defer { isLoading = false }
+
+        let ok = await bridge.login(host: host, user: user, password: password)
+        if ok {
             Settings(host: host, user: user, password: password).save()
             isLoggedIn = true
             await fetchAll()
             return true
-        } catch {
-            errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        } else {
+            errorText = bridge.lastError ?? "登录失败"
             return false
         }
     }
@@ -45,17 +48,16 @@ final class CpeStore: ObservableObject {
     func tryAutoLogin() async {
         let s = Settings.load()
         guard s.isConfigured else { return }
-        CpeAPI.shared.update(host: s.host, user: s.user, password: s.password)
-        do {
-            try await CpeAPI.shared.login()
+        let ok = await bridge.login(host: s.host, user: s.user, password: s.password)
+        if ok {
             isLoggedIn = true
             await fetchAll()
-        } catch {
-            errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        } else {
+            errorText = bridge.lastError
         }
     }
 
-    // MARK: - 数据拉取
+    // MARK: - 数据
 
     func fetchAll() async {
         async let a: Void = fetchStatus()
@@ -65,111 +67,154 @@ final class CpeStore: ObservableObject {
     }
 
     func fetchStatus() async {
-        do {
-            let map = CpeNode.overview
-            let v = try await CpeAPI.shared.getValues(map)
-            status.raw = v
-            realtimeRx = status.realtimeRx
-            realtimeTx = status.realtimeTx
-        } catch {
-            errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        }
+        let v = await bridge.fetchValues(CpeNode.overview)
+        guard !v.isEmpty else { return }
+        status.raw = v
+        realtimeRx = status.realtimeRx
+        realtimeTx = status.realtimeTx
     }
 
     func fetchHosts() async {
-        do {
-            // 1. Wi-Fi 关联设备（真实在线）
-            let wifi = try await CpeAPI.shared.multipost(method: "get_xml_childnode_value", data: [
-                "data_1": [
-                    "url": "LANDevice.1.WLANConfiguration.",
-                    "node": ["AssociatedDevice": [
-                        "url": "AssociatedDevice.",
-                        "node": ["MAC": "AssociatedDeviceMACAddress",
-                                 "RSSI": "AssociatedDeviceRSSI"]
-                    ]]
-                ]
-            ])
-            var onlineMacs = Set<String>()
-            var wifiBand: [String: String] = [:]
-            if let d1 = wifi["data_1"] as? [String: Any],
-               let arr = d1["data"] as? [[String: Any]] {
-                for (i, wl) in arr.enumerated() {
-                    guard let ads = wl["AssociatedDevice"] as? [[String: Any]] else { continue }
-                    for ad in ads {
-                        if let m = (ad["MAC"] as? String)?.uppercased(), !m.isEmpty {
-                            onlineMacs.insert(m)
-                            wifiBand[m] = i >= 4 ? "5G Wi-Fi" : "2.4G Wi-Fi"
-                        }
-                    }
+        // Wi-Fi 关联设备（真实在线判断依据）
+        let wifiRows = await bridge.multipost(method: "get_xml_childnode_value", data: [
+            "data_1": [
+                "url": "LANDevice.1.WLANConfiguration.",
+                "node": ["AssociatedDevice": [
+                    "url": "AssociatedDevice.",
+                    "node": ["MAC": "AssociatedDeviceMACAddress"]
+                ]]
+            ]
+        ])
+
+        var onlineMacs = Set<String>()
+        var wifiBand: [String: String] = [:]
+        for (i, wl) in wifiRows.enumerated() {
+            guard let ads = wl["AssociatedDevice"] as? [[String: Any]] else { continue }
+            for ad in ads {
+                let m = (ad["MAC"] as? String ?? "").uppercased()
+                if !m.isEmpty {
+                    onlineMacs.insert(m)
+                    wifiBand[m] = i >= 4 ? "5G Wi-Fi" : "2.4G Wi-Fi"
                 }
             }
+        }
 
-            // 2. Hosts 表：拿名称 / 有线在线 / 限速
-            let hh = try await CpeAPI.shared.multipost(method: "get_xml_childnode_value", data: [
-                "data_1": [
-                    "url": "LANDevice.1.Hosts.Host.",
-                    "node": ["HostName": "HostName", "MAC": "MACAddress",
-                             "IP": "IPAddress", "Layer2": "Layer2Interface",
-                             "Down": "MaxDSBandwidth", "Up": "MaxUSBandwidth"]
-                ]
-            ])
+        // Hosts 表：名称 / 有线 / 限速
+        let hostRows = await bridge.multipost(method: "get_xml_childnode_value", data: [
+            "data_1": [
+                "url": "LANDevice.1.Hosts.Host.",
+                "node": ["HostName": "HostName", "MAC": "MACAddress",
+                         "IP": "IPAddress", "Layer2": "Layer2Interface",
+                         "Down": "MaxDSBandwidth", "Up": "MaxUSBandwidth"]
+            ]
+        ])
 
-            var result: [CpeHost] = []
-            var seen = Set<String>()
-            if let d = hh["data_1"] as? [String: Any],
-               let rows = d["data"] as? [[String: Any]] {
-                for r in rows {
-                    let mac = (r["MAC"] as? String ?? "").uppercased()
-                    guard !mac.isEmpty, !seen.contains(mac) else { continue }
-                    let layer = r["Layer2"] as? String ?? ""
-                    let ip = (r["IP"] as? String ?? "").trimmingCharacters(in: .whitespaces)
-                    let wired = layer.uppercased().contains("ETHERNET")
-                    let isOnline = wired ? !ip.isEmpty : onlineMacs.contains(mac)
-                    guard isOnline else { continue }
-                    seen.insert(mac)
-                    let idx = String(r["child_node_idx"] as? Int ?? 0)
-                    result.append(CpeHost(
-                        idx: idx,
-                        name: (r["HostName"] as? String) ?? "设备",
-                        mac: mac, ip: ip,
-                        iface: wired ? "Ethernet" : (wifiBand[mac] ?? "Wi-Fi"),
-                        downLimit: r["Down"] as? String ?? "0",
-                        upLimit: r["Up"] as? String ?? "0"))
-                }
-            }
-            // 补充：Wi-Fi 在线但 Hosts 表没有的
-            for mac in onlineMacs where !seen.contains(mac) {
-                result.append(CpeHost(idx: "", name: "移动设备", mac: mac, ip: "",
-                                      iface: wifiBand[mac] ?? "Wi-Fi",
-                                      downLimit: "0", upLimit: "0"))
-            }
-            hosts = result
-        } catch {
-            // 静默失败，保留旧数据
+        var result: [CpeHost] = []
+        var seen = Set<String>()
+        for r in hostRows {
+            let mac = (r["MAC"] as? String ?? "").uppercased()
+            guard !mac.isEmpty, !seen.contains(mac) else { continue }
+            let layer = r["Layer2"] as? String ?? ""
+            let ip = (r["IP"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let wired = layer.uppercased().contains("ETHERNET")
+            let online = wired ? !ip.isEmpty : onlineMacs.contains(mac)
+            guard online else { continue }
+            seen.insert(mac)
+            result.append(CpeHost(
+                idx: String(r["child_node_idx"] as? Int ?? 0),
+                name: (r["HostName"] as? String) ?? "设备",
+                mac: mac, ip: ip,
+                iface: wired ? "Ethernet" : (wifiBand[mac] ?? "Wi-Fi"),
+                downLimit: r["Down"] as? String ?? "0",
+                upLimit: r["Up"] as? String ?? "0"))
+        }
+        for mac in onlineMacs where !seen.contains(mac) {
+            result.append(CpeHost(idx: "", name: "移动设备", mac: mac, ip: "",
+                                  iface: wifiBand[mac] ?? "Wi-Fi",
+                                  downLimit: "0", upLimit: "0"))
+        }
+        hosts = result
+    }
+
+    func fetchSms() async -> [CpeSms] {
+        let rows = await bridge.multipost(method: "get_xml_childnode_value", data: [
+            "data_1": [
+                "url": "InternetGatewayDevice.X_FH_MobileNetwork.SMS_Recv.SMS_RecvMsg.",
+                "node": ["Sender": "Sender", "Content": "Content",
+                         "RecvTime": "RecvTime"]
+            ]
+        ])
+        return rows.compactMap { row -> CpeSms? in
+            let sender = (row["Sender"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let content = (row["Content"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            guard !sender.isEmpty || !content.isEmpty else { return nil }
+            return CpeSms(sender: sender, content: content,
+                          time: row["RecvTime"] as? String ?? "")
         }
     }
 
     // MARK: - 控制
 
-    func setToggle(_ node: String, on: Bool) async -> Bool {
-        do {
-            _ = try await CpeAPI.shared.setSingle(url: node, value: on ? "1" : "0")
-            await fetchStatus()
-            return true
-        } catch {
-            errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            return false
-        }
+    func setToggle(node: String, on: Bool) async -> Bool {
+        let ok = await bridge.setSingle(url: node, value: on ? "1" : "0")
+        if ok { await fetchStatus() }
+        return ok
     }
 
     func reboot() async -> Bool {
-        do {
-            _ = try await CpeAPI.shared.runCommand("REBOOT_WEB")
-            return true
-        } catch {
-            errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            return false
+        await bridge.runCommand("REBOOT_WEB")
+    }
+
+    /// 频段锁定
+    func applyBandLock(enable: Bool, nr: [Int], lte: [Int]) async -> Bool {
+        let ns = CpeNode.netSet
+        var ok = await bridge.setSingle(url: ns + "LockBandEnable", value: enable ? "1" : "0")
+        if !nr.isEmpty {
+            ok = await bridge.setSingle(url: ns + "NRLockBAND",
+                                        value: nr.map(String.init).joined(separator: ",")) && ok
         }
+        if !lte.isEmpty {
+            ok = await bridge.setSingle(url: ns + "LTELockBAND",
+                                        value: lte.map(String.init).joined(separator: ",")) && ok
+        }
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        await fetchStatus()
+        return ok
+    }
+
+    /// 运营商锁定
+    func applyCarrierLock(enable: Bool, serial: String) async -> Bool {
+        let ns = CpeNode.netSet
+        var ok = await bridge.setSingle(url: ns + "CarrierLockEnable", value: enable ? "1" : "0")
+        if !serial.isEmpty {
+            ok = await bridge.setSingle(url: ns + "CarrierSerialNum", value: serial) && ok
+        }
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        await fetchStatus()
+        return ok
+    }
+
+    /// 重命名设备
+    func renameHost(idx: String, name: String) async -> Bool {
+        await bridge.setSingle(url: "LANDevice.1.Hosts.Host.\(idx).X_FH_DevName", value: name)
+    }
+
+    /// 限速（Mbps → Kbps）
+    func limitHost(idx: String, down: String, up: String) async -> Bool {
+        let base = "LANDevice.1.Hosts.Host.\(idx)."
+        let dK = String(Int((Double(down) ?? 0) * 1024))
+        let uK = String(Int((Double(up) ?? 0) * 1024))
+        let ok1 = await bridge.setSingle(url: base + "MaxDSBandwidth", value: dK)
+        let ok2 = await bridge.setSingle(url: base + "MaxUSBandwidth", value: uK)
+        return ok1 && ok2
+    }
+
+    /// 发送短信
+    func sendSms(to: String, text: String) async -> Bool {
+        let rows = await bridge.multipost(method: "send_sms",
+                                          data: ["phone_number": to, "content": text])
+        _ = rows
+        return true
     }
 
     // MARK: - 轮询
