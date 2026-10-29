@@ -67,8 +67,19 @@ final class CpeStore: ObservableObject {
     }
 
     func fetchStatus() async {
-        let v = await bridge.fetchValues(CpeNode.overview)
+        var v = await bridge.fetchValues(CpeNode.overview)
         guard !v.isEmpty else { return }
+
+        // uptime 不在 XML 节点里，需单独走 get_cmd_result_web
+        let cmd = await bridge.multipost(method: "get_cmd_result_web", data: [
+            "data_1": ["key": "UPTIME"]
+        ])
+        if let first = cmd.first, let result = first["result"] as? String {
+            v["uptime"] = result
+        } else if let first = cmd.first, let num = first["result"] as? NSNumber {
+            v["uptime"] = num.stringValue
+        }
+
         status.raw = v
         realtimeRx = status.realtimeRx
         realtimeTx = status.realtimeTx
