@@ -206,9 +206,15 @@ struct SmsView: View {
                 if loading && list.isEmpty {
                     ProgressView("读取中…").frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if list.isEmpty {
-                    ContentUnavailableView("暂无短信",
-                                           systemImage: "message",
-                                           description: Text("收件箱是空的"))
+                    VStack(spacing: 12) {
+                        Image(systemName: "message")
+                            .font(.system(size: 44))
+                            .foregroundStyle(.secondary.opacity(0.6))
+                        Text("暂无短信").font(.system(size: 17, weight: .semibold))
+                        Text("收件箱是空的")
+                            .font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List(list) { m in
                         VStack(alignment: .leading, spacing: 5) {
