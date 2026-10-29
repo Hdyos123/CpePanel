@@ -135,6 +135,7 @@ struct ControlView: View {
 
     var body: some View {
         NavigationStack {
+            WideAdapter {
             List {
                 Section("网络开关") {
                     toggleRow("飞行模式", "关闭所有无线收发",
@@ -157,6 +158,7 @@ struct ControlView: View {
                 }
             }
             .navigationTitle("控制")
+            }
             .alert("确认操作", isPresented: Binding(
                 get: { pendingToggle != nil },
                 set: { if !$0 { pendingToggle = nil } }
@@ -211,6 +213,7 @@ struct ParamView: View {
 
     var body: some View {
         NavigationStack {
+            WideAdapter {
             List {
                 Section("CPE 信息") {
                     row("型号", s["model"])
@@ -244,6 +247,7 @@ struct ParamView: View {
                 }
             }
             .navigationTitle("参数")
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -265,47 +269,6 @@ struct ParamView: View {
                 .multilineTextAlignment(.trailing)
         }
         .font(.system(size: 14))
-    }
-}
-
-// MARK: - 设备浮层
-
-struct DeviceSheet: View {
-    let hosts: [CpeHost]
-    @Environment(\.dismiss) var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List(hosts) { h in
-                HStack(spacing: 11) {
-                    Image(systemName: h.isWired ? "desktopcomputer" : "iphone")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.blue)
-                        .frame(width: 34, height: 34)
-                        .background(RoundedRectangle(cornerRadius: 11)
-                            .fill(Color.blue.opacity(0.1)))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(h.name).font(.system(size: 14, weight: .medium))
-                        Text("\(h.ip.isEmpty ? h.mac : h.ip) · \(h.bandLabel)")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Text("在线")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.green)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Capsule().fill(Color.green.opacity(0.12)))
-                }
-                .padding(.vertical, 2)
-            }
-            .navigationTitle("设备列表")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("关闭") { dismiss() }
-                }
-            }
-        }
     }
 }
 
@@ -454,6 +417,34 @@ struct ConnEditor: View {
                     Button("关闭") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+// MARK: - 锁频 / 短信（占位，后续完善）
+
+struct LockBandView: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("频段锁定") {
+                    Text("当前 N78 · 100MHz").foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("锁频")
+        }
+    }
+}
+
+struct SmsView: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("收件箱") {
+                    Text("暂无短信").foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("短信")
         }
     }
 }
