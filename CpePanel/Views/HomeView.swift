@@ -7,32 +7,85 @@ struct HomeView: View {
 
     private var s: CpeStatus { store.status }
 
+    @Environment(\.horizontalSizeClass) private var hSize
+    @Environment(\.verticalSizeClass) private var vSize
+
+    /// 大屏（iPad 横屏 / 分屏宽屏）用双栏
+    private var isWide: Bool {
+        hSize == .regular && vSize == .regular
+    }
+
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 14) {
-                    heroCard
-                    speedCards
-                    contractCards
-                    pccCard
-                    trafficCard
+            GeometryReader { geo in
+                ScrollView(.vertical, showsIndicators: true) {
+                    if isWide {
+                        wideLayout(geo: geo)
+                    } else {
+                        compactLayout
+                    }
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 6)
-                .padding(.bottom, 24)
+                .frame(width: geo.size.width, height: geo.size.height)
+                .background(Color(.systemGroupedBackground))
             }
-            .background(Color(.systemGroupedBackground))
+            .ignoresSafeArea(edges: .bottom)
             .navigationBarHidden(true)
             .refreshable { await store.fetchAll() }
             .sheet(isPresented: $showDevices) {
                 DeviceSheet(hosts: store.hosts)
-                    .presentationDetents([.medium, .large])
+                    .environmentObject(store)
+                    .presentationDetents(isWide ? [.large] : [.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showModel) {
                 ModelSheet(status: s)
-                    .presentationDetents([.medium])
+                    .presentationDetents(isWide ? [.large] : [.medium])
             }
         }
+    }
+
+    // MARK: - 紧凑布局（iPhone）
+
+    private var compactLayout: some View {
+        VStack(spacing: 14) {
+            heroCard
+            speedCards
+            contractCards
+            pccCard
+            trafficCard
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 24)
+    }
+
+    // MARK: - 宽屏双栏布局（iPad 横屏）
+
+    private func wideLayout(geo: GeometryProxy) -> some View {
+        let maxW: CGFloat = 1000
+        let contentW = min(geo.size.width - 40, maxW)
+        let gap: CGFloat = 16
+        // 左右栏 1 : 1.15，右栏略宽容纳 PCC 四列
+        let leftW = (contentW - gap) * 0.47
+
+        return HStack(alignment: .top, spacing: gap) {
+            VStack(spacing: 14) {
+                heroCard
+                speedCards
+                contractCards
+            }
+            .frame(width: leftW)
+
+            VStack(spacing: 14) {
+                pccCard
+                trafficCard
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .frame(width: contentW)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+        .padding(.bottom, 24)
     }
 
     // MARK: - 顶部主卡
