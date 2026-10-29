@@ -21,6 +21,7 @@ struct LockBandView: View {
 
     var body: some View {
         NavigationStack {
+            WideAdapter(maxWidth: 760) {
             List {
                 Section {
                     HStack {
@@ -114,6 +115,7 @@ struct LockBandView: View {
                 }
             }
             .navigationTitle("锁频")
+            }
             .task { loadCurrent() }
             .alert("确认操作", isPresented: $showConfirm) {
                 Button("取消", role: .cancel) { }
@@ -199,6 +201,7 @@ struct SmsView: View {
 
     var body: some View {
         NavigationStack {
+            WideAdapter(maxWidth: 760) {
             Group {
                 if loading && list.isEmpty {
                     ProgressView("读取中…").frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -228,6 +231,7 @@ struct SmsView: View {
                 }
             }
             .navigationTitle("短信")
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
