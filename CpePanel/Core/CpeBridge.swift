@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import WebKit
 import Combine
 
@@ -21,6 +22,17 @@ final class CpeBridge: NSObject, ObservableObject {
 
     // MARK: - 建立会话
 
+    /// 伪装成 iPhone Safari 的 UA
+    /// CPE 固件常按 UA 判断浏览器类型，默认 WKWebView UA 会带
+    /// "Mobile/xxx" 但没有 Safari 标识，可能被当作不支持的客户端
+    static var safariUA: String {
+        let v = UIDevice.current.systemVersion.replacingOccurrences(of: ".", with: "_")
+        return "Mozilla/5.0 (iPhone; CPU iPhone OS \(v) like Mac OS X) "
+             + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+             + "Version/\(UIDevice.current.systemVersion.prefix(2)).0 "
+             + "Mobile/15E148 Safari/604.1"
+    }
+
     func attach(to view: UIView) {
         container = view
         guard webView == nil else { return }
@@ -30,6 +42,23 @@ final class CpeBridge: NSObject, ObservableObject {
         cfg.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         let wv = WKWebView(frame: .zero, configuration: cfg)
+
+        // 关键：设置 Safari UA
+        wv.customUserAgent = Self.safariUA
+        // 同时注入到 navigator，避免 JS 侧检测（部分固件会读 navigator.userAgent）
+        let uaJS = """
+        Object.defineProperty(navigator, 'userAgent', {
+          get: function(){ return '\(Self.safariUA)'; }
+        });
+        Object.defineProperty(navigator, 'appVersion', {
+          get: function(){ return '5.0 (iPhone; CPU iPhone OS \(UIDevice.current.systemVersion.replacingOccurrences(of: ".", with: "_")) like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/\(UIDevice.current.systemVersion.prefix(2)).0 Mobile/15E148 Safari/604.1'; }
+        });
+        """
+        let script = WKUserScript(source: uaJS,
+                                  injectionTime: .atDocumentStart,
+                                  forMainFrameOnly: false)
+        cfg.userContentController.addUserScript(script)
+
         wv.navigationDelegate = self
         wv.isHidden = true
         wv.alpha = 0.01                            // 必须留一点透明度，否则可能不加载
@@ -65,7 +94,14 @@ final class CpeBridge: NSObject, ObservableObject {
         return await withCheckedContinuation { cont in
             pendingLogin = cont
             loginCreds = (user, password)
-            wv.load(URLRequest(url: url))
+            var req = URLRequest(url: url)
+            req.setValue(Self.safariUA, forHTTPHeaderField: "User-Agent")
+            req.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                         forHTTPHeaderField: "Accept")
+            req.setValue("zh-CN,zh-Hans;q=0.9", forHTTPHeaderField: "Accept-Language")
+            req.setValue("keep-alive", forHTTPHeaderField: "Connection")
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+            wv.load(req)
         }
     }
 
