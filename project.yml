@@ -20,7 +20,7 @@ targets:
       - path: CpePanel
         excludes:
           - "Resources/Info.plist"
-      settings:
+    settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cpepanel.app
         INFOPLIST_FILE: CpePanel/Resources/Info.plist
