@@ -20,12 +20,10 @@ targets:
       - path: CpePanel
         excludes:
           - "Resources/Info.plist"
-          - "Resources/Bridging-Header.h"
-    settings:
+      settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cpepanel.app
         INFOPLIST_FILE: CpePanel/Resources/Info.plist
-        SWIFT_OBJC_BRIDGING_HEADER: CpePanel/Resources/Bridging-Header.h
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
