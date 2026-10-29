@@ -171,16 +171,14 @@ struct LockBandView: View {
             defer { busy = false }
             do {
                 if pendingAction == "band" {
-                    try await CpeAPI.shared.applyBandLock(
+                    _ = await store.applyBandLock(
                         enable: lockEnabled,
                         nr: Array(selectedNR).sorted(),
                         lte: Array(selectedLTE).sorted())
                 } else {
-                    try await CpeAPI.shared.applyCarrierLock(
+                    _ = await store.applyCarrierLock(
                         enable: carrierEnabled, serial: carrierSerial)
                 }
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
-                await store.fetchStatus()
             } catch {
                 store.errorText = (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription
@@ -286,25 +284,15 @@ struct SmsView: View {
     private func load() async {
         loading = true
         defer { loading = false }
-        if let result = try? await CpeAPI.shared.fetchSms() {
-            list = result
-        }
+        list = await store.fetchSms()
     }
 
     private func sendSms() {
         Task {
-            do {
-                _ = try await CpeAPI.shared.multipost(method: "send_sms", data: [
-                    "phone_number": composeTo,
-                    "content": composeText
-                ])
-                composeTo = ""
-                composeText = ""
-                showCompose = false
-            } catch {
-                store.errorText = (error as? LocalizedError)?.errorDescription
-                    ?? error.localizedDescription
-            }
+            _ = await store.sendSms(to: composeTo, text: composeText)
+            composeTo = ""
+            composeText = ""
+            showCompose = false
         }
     }
 }
