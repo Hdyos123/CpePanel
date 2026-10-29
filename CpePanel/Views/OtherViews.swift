@@ -457,31 +457,3 @@ struct ConnEditor: View {
         }
     }
 }
-
-// MARK: - 锁频 / 短信（占位，后续完善）
-
-struct LockBandView: View {
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("频段锁定") {
-                    Text("当前 N78 · 100MHz").foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle("锁频")
-        }
-    }
-}
-
-struct SmsView: View {
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("收件箱") {
-                    Text("暂无短信").foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle("短信")
-        }
-    }
-}
