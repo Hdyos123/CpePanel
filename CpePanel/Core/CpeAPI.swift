@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 
 /// FiberHome LG6121F CPE Web API 客户端
 ///
@@ -49,9 +48,6 @@ final class CpeAPI {
         guard let sid = sessionId.data(using: .utf8), sid.count >= 16 else {
             throw CpeError.noSession
         }
-        let key = SymmetricKey(data: sid.prefix(16))
-        let sealed = try AES.GCM.seal(Data(), using: key)   // 占位，实际用 CBC
-        _ = sealed
         let encrypted = try Self.cbcEncrypt(data: Data(plain.utf8),
                                             key: Data(sid.prefix(16)),
                                             iv: Self.iv)
@@ -134,7 +130,7 @@ final class CpeAPI {
         req.setValue("application/json, text/javascript, */*; q=0.01",
                      forHTTPHeaderField: "Accept")
         req.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
-        req.setValue(host + "/main.html", forHTTPHeaderField: "Referer")
+        req.setValue(host + "/", forHTTPHeaderField: "Referer")
         if let body {
             req.httpBody = Data(body.utf8)
             req.setValue("application/json; charset=utf-8",
@@ -172,11 +168,22 @@ final class CpeAPI {
         update(host: host, user: u, password: p)
 
         // 探测是否启用加密
-        if let t = try? await rawRequest(
-            path: "/api/tmp/FHNCAPIS?ajaxmethod=is_encrypt&_=\(Self.rnd())"),
-           let d = t.data(using: .utf8),
-           let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
-            aesEnabled = (o["enable"] as? Int ?? 1) == 1
+        do {
+            let t = try await rawRequest(
+                path: "/api/tmp/FHNCAPIS?ajaxmethod=is_encrypt&_=\(Self.rnd())")
+            NSLog("[CpePanel] is_encrypt -> \(t.prefix(200))")
+            if let d = t.data(using: .utf8),
+               let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+                // 兼容 enable / is_encrypt / isEncrypt 三种写法
+                if let v = o["enable"] as? Int { aesEnabled = v == 1 }
+                else if let v = o["is_encrypt"] as? Int { aesEnabled = v == 1 }
+                else if let v = o["isEncrypt"] as? Int { aesEnabled = v == 1 }
+                else if let v = o["enable"] as? Bool { aesEnabled = v }
+                else { aesEnabled = false }
+            }
+        } catch {
+            NSLog("[CpePanel] is_encrypt failed: \(error). 回退明文模式")
+            aesEnabled = false   // 探测失败时先试明文，别盲目加密
         }
 
         try await refreshSession()
@@ -194,9 +201,11 @@ final class CpeAPI {
             path: "/api/sign/DO_WEB_LOGIN?_\(Self.rnd())",
             body: payload, method: "POST")
         let trimmed = resp.trimmingCharacters(in: .whitespacesAndNewlines)
+        NSLog("[CpePanel] LOGIN aes=\(aesEnabled) sid=\(sessionId.prefix(8)) resp=\(trimmed.prefix(200))")
         guard trimmed.hasPrefix("0|") else {
             if trimmed.hasPrefix("2") { throw CpeError.locked }
-            throw CpeError.badCredentials
+            // 把设备原始响应带进错误，方便定位
+            throw CpeError.server(trimmed.prefix(160).description)
         }
     }
 
@@ -278,6 +287,7 @@ final class CpeAPI {
 enum CpeError: LocalizedError {
     case badHost, badResponse, noSession, cryptoFailed
     case http(Int), locked, badCredentials
+    case server(String)
 
     var errorDescription: String? {
         switch self {
@@ -288,6 +298,7 @@ enum CpeError: LocalizedError {
         case .http(let c):   return "HTTP \(c)"
         case .locked:        return "登录被锁定，请等待 1 分钟后重试"
         case .badCredentials:return "用户名或密码错误"
+        case .server(let s): return "设备返回: \(s)"
         }
     }
 }
