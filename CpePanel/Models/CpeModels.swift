@@ -83,8 +83,18 @@ struct CpeStatus {
     var raw: [String: String] = [:]
 
     subscript(k: String) -> String { raw[k] ?? "" }
-    func int(_ k: String) -> Int { Int(raw[k] ?? "") ?? 0 }
-    func double(_ k: String) -> Double { Double(raw[k] ?? "") ?? 0 }
+
+    /// 设备部分字段是小数（如 uptime "905.2"），先转 Double 再取整
+    func int(_ k: String) -> Int {
+        guard let s = raw[k], !s.isEmpty else { return 0 }
+        if let i = Int(s) { return i }
+        if let d = Double(s) { return Int(d) }
+        return 0
+    }
+    func double(_ k: String) -> Double {
+        guard let s = raw[k], !s.isEmpty else { return 0 }
+        return Double(s) ?? 0
+    }
 
     var carrierName: String {
         switch self["carrier"] {
